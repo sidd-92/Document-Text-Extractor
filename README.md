@@ -9,11 +9,14 @@ https://ai.studio/apps/04ffa28c-61e1-4e78-b74c-1021a85b125c
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
    `npm install`
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Production URL
+
+https://document-text-extractor-u0bg.onrender.com/
