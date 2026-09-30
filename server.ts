@@ -174,16 +174,8 @@ app.post("/api/extract", async (req, res) => {
 
   } catch (error: any) {
     console.error("Gemini API OCR request failed:", error);
-    const latency = Date.now() - startTime;
-    // Graceful fallback to default mock Tamil index if it's the default Tamil index search or a failure
-    res.json({
-      ...fallbackTamilData,
-      stats: {
-        chars: fallbackTamilData.extractedText.length,
-        latency,
-        engine: "Fallback Local Engine (API Exception)",
-        error: error?.message || String(error)
-      }
+    res.status(502).json({
+      error: error?.message || String(error),
     });
   }
 });

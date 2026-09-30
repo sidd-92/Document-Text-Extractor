@@ -219,7 +219,8 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}: Failed to invoke Neural OCR Engine`);
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.error || `HTTP error ${response.status}: Failed to invoke Neural OCR Engine`);
       }
 
       const data = await response.json();
