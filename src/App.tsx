@@ -255,10 +255,34 @@ export default function App() {
       copyText = JSON.stringify({ confidence, detectedLanguages, stats, sections }, null, 2);
     }
 
-    navigator.clipboard.writeText(copyText).then(() => {
+    const onCopied = () => {
       setClipboardCopied(true);
       setTimeout(() => setClipboardCopied(false), 2000);
-    });
+    };
+
+    // navigator.clipboard is unavailable on non-secure origins (e.g. http://0.0.0.0), so fall back to execCommand
+    const legacyCopy = () => {
+      const textarea = document.createElement("textarea");
+      textarea.value = copyText;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        if (document.execCommand("copy")) onCopied();
+        else console.error("Copy failed: execCommand returned false");
+      } catch (err) {
+        console.error("Copy failed:", err);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(copyText).then(onCopied).catch(legacyCopy);
+    } else {
+      legacyCopy();
+    }
   };
 
   // Export results as formatted JSON file

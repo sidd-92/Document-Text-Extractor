@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -115,65 +115,49 @@ app.post("/api/extract", async (req, res) => {
   try {
     const parsed = parseClientImage(image);
     
-    // Call Gemini with schema configuration matching our structural extraction
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [
-        {
-          inlineData: {
-            mimeType: parsed.mimeType,
-            data: parsed.data,
-          }
+    // Gemini's copyright filter (finishReason RECITATION) randomly blocks book-like pages,
+    // and responseSchema makes it worse, so describe the JSON shape in the prompt and retry.
+    const prompt =
+      "Perform precision OCR transcription on this document image. " +
+      "Extract the text with absolute literal accuracy (preserving Native Indian script like Tamil with full letter fidelity). " +
+      "Respond with JSON only, in exactly this shape: " +
+      '{"extractedText": string (complete verbatim transcript, retaining layout lines), ' +
+      '"detectedLanguages": string[], "confidence": number (estimated OCR accuracy 0-100), ' +
+      '"sections": [{"id": string (index/serial number or empty), "page": string (margin page number or empty), ' +
+      '"original": string (verbatim segment), "translation": string (English translation; empty if the segment is already English)}]}. ' +
+      "Deconstruct each distinct paragraph, index row or entry into a section.";
+
+    const MAX_ATTEMPTS = 6;
+    let ocrData: any = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !ocrData; attempt++) {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{ inlineData: { mimeType: parsed.mimeType, data: parsed.data } }, prompt],
+        config: {
+          systemInstruction: "You are a professional research-grade document OCR system specializing in Indian, Oriental, and classical text transcription. Deconstruct visual text elements into semantic segments. Retain table rows index items as singular entries, and translate foreign language items to fluent English as helper annotations.",
+          maxOutputTokens: 32768,
+          responseMimeType: "application/json",
         },
-        "Perform precision OCR transcription on this document image. " +
-        "Extract the text with absolute literal accuracy (preserving Native Indian script like Tamil with full letter fidelity). " +
-        "Return the detailed full transcript, the detected languages used, and deconstruct each distinct item or entry into structural sections."
-      ],
-      config: {
-        systemInstruction: "You are a professional research-grade document OCR system specializing in Indian, Oriental, and classical text transcription. Deconstruct visual text elements into semantic segments. Retain table rows index items as singular entries, and translate foreign language items to fluent English as helper annotations.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          required: ["extractedText", "detectedLanguages", "confidence", "sections"],
-          properties: {
-            extractedText: {
-              type: Type.STRING,
-              description: "The complete verbatim text transcript from the image, retaining structural layout lines."
-            },
-            detectedLanguages: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "All languages found in the image, e.g. Tamil, English, etc."
-            },
-            confidence: {
-              type: Type.NUMBER,
-              description: "Estimated OCR accuracy confidence percentage (0-100)."
-            },
-            sections: {
-              type: Type.ARRAY,
-              description: "Deconstructed list of individual index rows or paragraphs from the text.",
-              items: {
-                type: Type.OBJECT,
-                required: ["id", "page", "original"],
-                properties: {
-                  id: { type: Type.STRING, description: "Index, serial number or section numbering (e.g. 113)" },
-                  page: { type: Type.STRING, description: "The page number referenced at the margin (e.g. 123) or leave empty" },
-                  original: { type: Type.STRING, description: "Verbatim original text segment or line transcribed" },
-                  translation: { type: Type.STRING, description: "Accurate English translation or plain english contextual summary of this segment" }
-                }
-              }
-            }
-          }
+      });
+
+      const resultText = response.text;
+      if (resultText) {
+        try {
+          const candidate = JSON.parse(resultText);
+          if (candidate?.extractedText) ocrData = candidate;
+        } catch {
+          console.warn(`Gemini attempt ${attempt}: invalid JSON, retrying`);
         }
+      } else {
+        console.warn(
+          `Gemini attempt ${attempt}/${MAX_ATTEMPTS} empty. finishReason:`, response.candidates?.[0]?.finishReason,
+          "promptFeedback:", JSON.stringify(response.promptFeedback)
+        );
       }
-    });
-
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error("No text output received from Gemini API");
     }
-
-    const ocrData = JSON.parse(resultText);
+    if (!ocrData) {
+      throw new Error("No usable text output received from Gemini API after retries");
+    }
     const latency = Date.now() - startTime;
 
     res.json({
